@@ -1,0 +1,151 @@
+# Generates the Codata module automatically from NIST data available at
+# http://physics.nist.gov/cuu/Constants/Table/allascii.txt
+module CODATAgen
+
+export GenCodataDefault,GenCodataSIUnits,autogen_codata_module
+const units_match=r"(mol|kg|m|Pa|W|MeV|GeV|eV|J|u|ohm|C|F|S|N|T)(\^\-?[0-9])?"
+const ignore_unit=r"E_h|C_90"
+
+function parse_to_codata(name,value,units,unc)
+    if name == "bohr_magneton_in_ev_per_t"
+        "# FIXME $name\n"
+    elseif name == "boltzmann_constant_in_ev_per_k"
+        "# FIXME $name\n"
+    elseif name == "natural_unit_of_action_in_ev_s"
+        "# FIXME $name\n"
+    elseif name == "nuclear_magneton_in_ev_per_t"
+        "# FIXME $name\n"
+    elseif name == "planck_constant_in_ev_s"
+        "# FIXME $name\n"
+    elseif name == "planck_constant_over_2_pi_in_ev_s"
+        "# FIXME $name\n"
+    else
+        if contains(units, "E_h")
+            "# FIXME $name ($units)\n"
+        elseif contains(units, "sr")
+            "# FIXME $name ($units)\n"
+        elseif contains(units, "Wb")
+            "# FIXME $name ($units)\n"
+        elseif contains(units, "/c")
+            "# FIXME $name ($units)\n"
+        elseif units == "ohm"
+            units = "Ohm"
+            "const $name = PhysicalConstant(\"$name\",$value$units,$unc$units,\"$units\")\n"    
+        elseif contains(units, "C_90")
+            "# FIXME $name ($units)\n"
+        else
+            "const $name = PhysicalConstant(\"$name\",$value$units,$unc$units,\"$units\")\n"    
+        end
+    end 
+end
+function getTmpName()
+    let makeTmpName=x->ccall((:tmpnam,"libc"),Ptr{Cchar},(Ptr{Uint8},),x)
+        tmpname=makeTmpName(0)
+        bytestring(tmpname)
+    end            
+end  
+function get_codata_and_gen_module(write_exports=true,
+                                   gen_name=parse_to_codata,
+                                   write_header=write_header_default,
+                                   name="CODATA.jl")
+    tmpName=getTmpName()
+    download("http://physics.nist.gov/cuu/Constants/Table/allascii.txt",tmpName)
+    autogen_codata_module(tmpName,write_exports,gen_name,write_header,name)
+end
+function autogen_codata_module(filename :: String,write_exports=true,
+                               gen_name=parse_to_codata,
+                               write_header=write_header_default,
+                               name="Codata.jl")
+    # open the input file file and get all the lines.
+    ifile = open(filename)
+    lines = readlines(ifile)
+    close(ifile)
+
+    # now open the target for writing.
+    exports = IOBuffer()
+    consts = IOBuffer()
+    ofile = open(name,false, true, true, true, false)
+    # write the header and footer on the file
+    write_header(ofile)
+    
+    # first 10 lines are the header, who cares.
+    data = lines[11:end]
+    
+    # now we just iterate over the dataset.  a few times, unfortunately.
+    for l in data
+        name = strip(l[1:58])
+        value = strip(l[59:83])
+        unc = strip(l[84:107])
+        units = strip(l[108:end])
+
+        # replace spaces in name with underscores, and a bunch of other stuff.
+        name = replace(name, ' ', '_')
+        name = replace(name, ',', '_')
+        name = replace(name, '-', '_')
+        name = replace(name, '/', "_per_")
+        name = replace(name, '.', "")
+        name = replace(name, "{220}_lattice_spacing_of_silicon", 
+                       "si_220_lattice_spacing")
+        name = replace(name, '(', '_')
+        name = replace(name, ')', "")
+        name = lowercase(name)
+        
+        # replace space in values and uncertainties with nothing
+        value, unc = replace(value, ' ', ""), replace(unc, ' ', "")
+        unc = replace(unc, "(exact)", "0.0")
+        value = replace(value,"...","")
+        units = replace(replace(units, "  ", ' '), ' ', '*')
+        if(gen_name(name,value,units,unc) != Nothing())
+            write(consts, gen_name(name,value,units,unc))
+        end
+    end
+    if(write_exports)
+    write(ofile,takebuf_string(exports))
+    end
+    close(exports)
+    write(ofile,takebuf_string(consts))
+    close(consts)
+    # write the footer
+    write_footer(ofile)
+    
+    # all done
+    close(ofile)
+end
+
+function write_header_default(hndl :: IOStream)
+    write(hndl, "# Codata.jl\n")
+    write(hndl, "# This file has been automatically generated.\n\n")
+    write(hndl, "module CODATA\n")
+    write(hndl, "using SIUnits\n\n")
+    write(hndl, "using SIUnits.ShortUnits\n\n")
+    write(hndl, "# The PhysicalConstant type encapsulates all of the\n")
+    write(hndl, "# information about a particular constant - the value,\n")
+    write(hndl, "# the uncertainty in that value, the units, and so on.\n")
+    write(hndl, "type PhysicalConstant\n")
+    write(hndl, "\tname :: String\n")
+    write(hndl, "\tvalue\n")
+    write(hndl, "\tuncertainty\n")
+    write(hndl, "\tunits_string :: String\n")
+    write(hndl, "end\n\n")
+    write(hndl, "# autogenerated non-SI units\n")
+    write(hndl, "const MeV = SIUnits.Mega*eV # Mega eV\n")
+    write(hndl, "const GeV = SIUnits.Giga*eV # Giga eV\n")
+    write(hndl, "const fm = SIUnits.Femto*m # femtometers\n")
+    write(hndl, "export AtomicMassUnit\n")
+    write(hndl, "const u = SIUnits.NonSIUnit{typeof(kg), :u}() # AMU\n")
+    write(hndl, "convert(::Type{SIUnits.SIQuantity},::typeof(u))=9.1093826kg\n ")
+    write(hndl, "const T = V*s*m^2\n # Tesla")
+    write(hndl, "# begin constants\n\n")
+end
+
+
+function write_footer(hndl :: IOStream)
+    write(hndl, "end # end of module definition\n")
+end
+function GenCodataDefault()
+    autogen_codata_module("allascii.txt")
+end
+function GenCodataSIUnits()
+    autogen_codata_module("allascii.txt",true,parse_to_SIUnits,write_header_SIUnits)
+end
+end
